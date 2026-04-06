@@ -32,30 +32,26 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
+#include <rclcpp/node.hpp>
 #include "utility/yaml_reader.hpp"
 #include "source/source.hpp"
 
-namespace robosense
-{
-namespace lidar
-{
+namespace robosense::lidar {
 
-class NodeManager
-{
+class NodeManager {
 public:
-
-  void init(const YAML::Node& config);
-  void start();
-  void stop();
+  void init(const YAML::Node &config);
+  void start() const;
+  void stop() const;
 
   ~NodeManager();
   NodeManager() = default;
 
 private:
-
   std::vector<Source::Ptr> sources_;
+  std::vector<std::unique_ptr<rclcpp::Node>> node_vector_;
+  // todo: this looks really ugly...
+  std::vector<std::thread> threads_;
 };
 
-}  // namespace lidar
-}  // namespace robosense
-
+} // namespace robosense::lidar

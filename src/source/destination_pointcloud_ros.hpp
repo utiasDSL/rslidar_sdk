@@ -37,24 +37,36 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *********************************************************************************************************************/
 
 #pragma once
-#include "source/source_driver.hpp"
-#include "rslidar_msg/msg/rslidar_packet.hpp"
+
+#include "source/source.hpp"
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
+#ifdef ENABLE_IMU_DATA_PARSE
+#include <sensor_msgs/msg/imu.hpp>
+#endif
+#include <sstream>
 
 namespace robosense::lidar {
 
-class SourcePacketRos : public SourceDriver {
+class DestinationPointCloudRos : virtual public DestinationPointCloud {
 public:
-  explicit SourcePacketRos(rclcpp::Node *node_ptr)
-      : SourceDriver(SourceType::MSG_FROM_ROS_PACKET), node_ptr_(node_ptr) {}
+  explicit DestinationPointCloudRos(rclcpp::Node *node_ptr)
+      : DestinationPointCloud(), send_by_rows_(false), node_ptr_(node_ptr) {}
   void init(const YAML::Node &config) override;
+  void sendPointCloud(const LidarPointCloudMsg &msg) override;
+#ifdef ENABLE_IMU_DATA_PARSE
+  void sendImuData(const std::shared_ptr<ImuData> &data) override;
+#endif
+  ~DestinationPointCloudRos() override = default;
 
 private:
-  void putPacket(const rslidar_msg::msg::RslidarPacket::SharedPtr msg) const;
-  rclcpp::Subscription<rslidar_msg::msg::RslidarPacket>::SharedPtr pkt_sub_;
-  rclcpp::CallbackGroup::SharedPtr callback_group_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_;
+#ifdef ENABLE_IMU_DATA_PARSE
+  rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
+#endif
+  std::string frame_id_;
+  bool send_by_rows_;
   rclcpp::Node *node_ptr_;
-
 };
 
 } // namespace robosense::lidar

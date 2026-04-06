@@ -1,42 +1,5 @@
-/*********************************************************************************************************************
-Copyright (c) 2020 RoboSense
-All rights reserved
 
-By downloading, copying, installing or using the software you agree to this
-license. If you do not agree to this license, do not download, install, copy or
-use the software.
-
-License Agreement
-For RoboSense LiDAR SDK Library
-(3-clause BSD License)
-
-Redistribution and use in source and binary forms, with or without modification,
-are permitted provided that the following conditions are met:
-
-1. Redistributions of source code must retain the above copyright notice, this
-list of conditions and the following disclaimer.
-
-2. Redistributions in binary form must reproduce the above copyright notice,
-this list of conditions and the following disclaimer in the documentation and/or
-other materials provided with the distribution.
-
-3. Neither the names of the RoboSense, nor Suteng Innovation Technology, nor the
-names of other contributors may be used to endorse or promote products derived
-from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
-ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
-ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*********************************************************************************************************************/
-
-#include "manager/node_manager.hpp"
+#include "rslidar_component.hpp"
 #include "source/destination_packet_ros.hpp"
 #include "source/destination_pointcloud_ros.hpp"
 #include "source/source_driver.hpp"
@@ -44,7 +7,47 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace robosense::lidar {
 
-void NodeManager::init(const YAML::Node &config) {
+RSLiDARComponent::RSLiDARComponent(const rclcpp::NodeOptions &options)
+    : rclcpp::Node("rslidar_component", options) {
+
+  RCLCPP_INFO(get_logger(), "================================");
+  RCLCPP_INFO(get_logger(), "        RSLIDAR ROS2 Node       ");
+  RCLCPP_INFO(get_logger(), "================================");
+  RCLCPP_INFO(get_logger(), " * namespace: %s", get_namespace());
+  RCLCPP_INFO(get_logger(), " * node name: %s", get_name());
+  RCLCPP_INFO(get_logger(), " * Intra process communication: %s",
+              options.use_intra_process_comms() ? "Enabled" : "Disabled");
+  if (!options.use_intra_process_comms())
+    RCLCPP_WARN(get_logger(), " * Intra process communication disabled!");
+  RCLCPP_INFO(get_logger(), "================================");
+
+  const std::chrono::milliseconds init_msec(static_cast<int>(50.0));
+  initTimer_ = this->create_wall_timer(
+      std::chrono::duration_cast<std::chrono::milliseconds>(init_msec),
+      std::bind(&RSLiDARComponent::init, this));
+}
+
+RSLiDARComponent::~RSLiDARComponent() { stop(); }
+
+void RSLiDARComponent::init() {
+
+  initTimer_->cancel();
+
+  RCLCPP_INFO(get_logger(), " * Initializing ...");
+
+  auto config_path =
+      static_cast<std::string>(PROJECT_PATH) + "/config/config.yaml";
+  RCLCPP_WARN(get_logger(), " * Loading configurations from %s",
+              config_path.c_str());
+
+  if (const auto config_path_from_ros =
+          this->declare_parameter<std::string>("config_path", "");
+      !config_path_from_ros.empty()) {
+    config_path = config_path_from_ros;
+  }
+
+  const auto config = YAML::LoadFile(config_path);
+
   const YAML::Node common_config = yamlSubNodeAbort(config, "common");
 
   int msg_source = 0;
@@ -65,7 +68,6 @@ void NodeManager::init(const YAML::Node &config) {
   yamlRead<bool>(common_config, "send_packet_proto", send_packet_proto, false);
 
   YAML::Node lidar_config = yamlSubNodeAbort(config, "lidar");
-
   for (uint8_t i = 0; i < lidar_config.size(); ++i) {
     std::shared_ptr<Source> source;
 
@@ -104,14 +106,6 @@ void NodeManager::init(const YAML::Node &config) {
       source = std::make_shared<SourcePacketRos>(node_ptr.get());
       source->init(lidar_config[i]);
 
-      threads_.push_back(std::thread([&]() {
-        rclcpp::executors::SingleThreadedExecutor executor;
-        executor.add_node(node_ptr->get_node_base_interface());
-        while (rclcpp::ok()) {
-          executor.spin_once();
-        }
-      }));
-      node_vector_.push_back(std::move(node_ptr));
       break;
     }
     case SourceType::MSG_FROM_PCAP: // pcap
@@ -150,13 +144,10 @@ void NodeManager::init(const YAML::Node &config) {
           << RS_REND;
       RS_DEBUG << "------------------------------------------------------"
                << RS_REND;
-      auto node_ptr = std::make_unique<rclcpp::Node>(
-          "rslidar_dst_ros_package_" + std::to_string(i));
       const std::shared_ptr<DestinationPacket> dst =
-          std::make_shared<DestinationPacketRos>(node_ptr.get());
+          std::make_shared<DestinationPacketRos>(this);
       dst->init(lidar_config[i]);
       source->regPacketCallback(dst);
-      node_vector_.push_back(std::move(node_ptr));
     }
 
     if (send_point_cloud_ros) {
@@ -169,28 +160,25 @@ void NodeManager::init(const YAML::Node &config) {
                << RS_REND;
       RS_DEBUG << "------------------------------------------------------"
                << RS_REND;
-      auto node_ptr = std::make_unique<rclcpp::Node>(
-          "rslidar_dst_pointclound_" + std::to_string(i));
+
       const std::shared_ptr<DestinationPointCloud> dst =
-          std::make_shared<DestinationPointCloudRos>(node_ptr.get());
+          std::make_shared<DestinationPointCloudRos>(this);
       dst->init(lidar_config[i]);
       source->regPointCloudCallback(dst);
-      node_vector_.push_back(std::move(node_ptr));
     }
 
     sources_.emplace_back(source);
   }
 }
 
-void NodeManager::start() const {
+void RSLiDARComponent::start() const {
   for (auto &iter : sources_) {
     if (iter != nullptr) {
       iter->start();
     }
   }
 }
-
-void NodeManager::stop() const {
+void RSLiDARComponent::stop() const {
   for (auto &iter : sources_) {
     if (iter != nullptr) {
       iter->stop();
@@ -198,6 +186,7 @@ void NodeManager::stop() const {
   }
 }
 
-NodeManager::~NodeManager() { stop(); }
-
 } // namespace robosense::lidar
+
+#include <rclcpp_components/register_node_macro.hpp>
+RCLCPP_COMPONENTS_REGISTER_NODE(robosense::lidar::RSLiDARComponent)
