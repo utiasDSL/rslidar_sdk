@@ -13,11 +13,14 @@ public:
   ~RSLiDARComponent() override;
 
   void init();
-  void start() const;
-  void stop() const;
+  void start();
+  void stop();
 private:
   std::vector<Source::Ptr> sources_;
   rclcpp::TimerBase::SharedPtr initTimer_;
+  
+  std::atomic_bool initialized_{false};
+  std::thread start_thread_;
 };
 } // namespace robosense::lidar
 

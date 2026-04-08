@@ -25,9 +25,17 @@ RSLiDARComponent::RSLiDARComponent(const rclcpp::NodeOptions &options)
   initTimer_ = this->create_wall_timer(
       std::chrono::duration_cast<std::chrono::milliseconds>(init_msec),
       std::bind(&RSLiDARComponent::init, this));
+
+   start_thread_ = std::thread([this]() {
+    this->start();
+   });
 }
 
-RSLiDARComponent::~RSLiDARComponent() { stop(); }
+RSLiDARComponent::~RSLiDARComponent() { stop(); 
+if (start_thread_.joinable())
+{
+  start_thread_.join();
+}}
 
 void RSLiDARComponent::init() {
 
@@ -39,10 +47,10 @@ void RSLiDARComponent::init() {
       static_cast<std::string>(PROJECT_PATH) + "/config/config.yaml";
   RCLCPP_WARN(get_logger(), " * Loading configurations from %s",
               config_path.c_str());
-
-  if (const auto config_path_from_ros =
+  const auto config_path_from_ros =
           this->declare_parameter<std::string>("config_path", "");
-      !config_path_from_ros.empty()) {
+
+  if (!config_path_from_ros.empty()) {
     config_path = config_path_from_ros;
   }
 
@@ -144,7 +152,7 @@ void RSLiDARComponent::init() {
           << RS_REND;
       RS_DEBUG << "------------------------------------------------------"
                << RS_REND;
-      const std::shared_ptr<DestinationPacket> dst =
+      std::shared_ptr<DestinationPacket> dst =
           std::make_shared<DestinationPacketRos>(this);
       dst->init(lidar_config[i]);
       source->regPacketCallback(dst);
@@ -161,7 +169,7 @@ void RSLiDARComponent::init() {
       RS_DEBUG << "------------------------------------------------------"
                << RS_REND;
 
-      const std::shared_ptr<DestinationPointCloud> dst =
+      std::shared_ptr<DestinationPointCloud> dst =
           std::make_shared<DestinationPointCloudRos>(this);
       dst->init(lidar_config[i]);
       source->regPointCloudCallback(dst);
@@ -169,16 +177,21 @@ void RSLiDARComponent::init() {
 
     sources_.emplace_back(source);
   }
+  initialized_.store(true, std::memory_order_release);
+ 
 }
 
-void RSLiDARComponent::start() const {
+void RSLiDARComponent::start() {
+  while (!initialized_.load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
   for (auto &iter : sources_) {
     if (iter != nullptr) {
       iter->start();
     }
   }
 }
-void RSLiDARComponent::stop() const {
+void RSLiDARComponent::stop() {
   for (auto &iter : sources_) {
     if (iter != nullptr) {
       iter->stop();

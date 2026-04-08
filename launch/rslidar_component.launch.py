@@ -48,7 +48,7 @@ os.environ["RCUTILS_COLORIZED_OUTPUT"] = "1"
 default_config = os.path.join(
     get_package_share_directory('rslidar_sdk'),
     'config',
-    'config.yaml'
+    'rslidar_config.yaml'
 )
 
 
@@ -77,7 +77,7 @@ def launch_setup(context, *args, **kwargs):
         plugin='robosense::lidar::RSLiDARComponent',
         name='rslidar',
         parameters=[{
-            'config_file': default_config
+            'config_path': default_config
         }],
         extra_arguments=[{'use_intra_process_comms': True}],
     )
